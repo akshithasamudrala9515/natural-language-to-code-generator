@@ -1,4 +1,4 @@
 .env
 __pycache__/
 *.pyc
-generated_code.py
+agent_log.txt

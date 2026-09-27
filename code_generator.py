@@ -1,69 +1,41 @@
 import os
-import re
-from datetime import datetime
-
-from groq import Groq
 from dotenv import load_dotenv
+from groq import Groq
 
-
-# Load environment variables from .env
 load_dotenv()
 
-
-# Get API key
 api_key = os.getenv("GROQ_API_KEY")
 
 if not api_key:
-    print("Error: GROQ_API_KEY is not set.")
-    print("Please create a .env file and add your Groq API key.")
-    exit(1)
+    raise ValueError("GROQ_API_KEY not found in .env file")
 
-
-# Create Groq client
 client = Groq(api_key=api_key)
 
+MODEL = "openai/gpt-oss-120b"
 
-# System prompt
+
 SYSTEM_PROMPT = """
-You are a Python code generator.
+You are a Python code generation and debugging agent.
 
-Your job is to convert the user's natural-language programming task
-into valid, working Python code.
+Generate ONLY valid Python code.
 
-Rules:
-1. Return ONLY Python code.
-2. Do NOT provide explanations.
-3. Do NOT use Markdown.
-4. Do NOT use ``` code fences.
-5. Write simple and readable Python code.
-6. The generated code must be executable.
-7. Include functions when the task asks for a function.
-8. Add a small example/test at the bottom when appropriate.
+Do not use Markdown code fences.
+Do not explain the code.
+Do not write anything outside the Python code.
+
+The generated program must solve the user's task.
+
+If the user provides assertions, the generated code must satisfy all assertions.
 """
-
-
-def clean_code(code):
-    """
-    Removes Markdown code fences if the LLM returns them.
-    """
-
-    code = code.strip()
-
-    # Remove ```python and ``` fences
-    code = re.sub(r"^```python\s*", "", code, flags=re.IGNORECASE)
-    code = re.sub(r"^```\s*", "", code)
-    code = re.sub(r"\s*```$", "", code)
-
-    return code.strip()
 
 
 def generate_code(task):
     """
-    Sends the user's task to the Groq LLM and returns generated Python code.
+    Generate Python code for a new task.
     """
 
     response = client.chat.completions.create(
-        model="openai/gpt-oss-120b",
+        model=MODEL,
         messages=[
             {
                 "role": "system",
@@ -74,65 +46,75 @@ def generate_code(task):
                 "content": task
             }
         ],
-        temperature=0.2,
-        max_tokens=2000
+        temperature=0
     )
 
-    generated_code = response.choices[0].message.content
+    code = response.choices[0].message.content.strip()
 
-    return clean_code(generated_code)
+    return clean_code(code)
 
 
-def save_code(code):
+def fix_code(task, old_code, error_message):
     """
-    Saves generated Python code to generated_code.py.
+    Ask the LLM to fix previously generated code
+    based on the execution error.
     """
 
-    filename = "generated_code.py"
+    prompt = f"""
+The following Python code was generated for this task:
 
-    with open(filename, "w", encoding="utf-8") as file:
-        file.write(code)
+TASK:
+{task}
 
-    return filename
+PREVIOUS CODE:
+{old_code}
 
+The code failed during execution.
 
-def main():
-    print("=" * 60)
-    print("       NATURAL LANGUAGE TO CODE GENERATOR")
-    print("=" * 60)
+ERROR / OUTPUT:
+{error_message}
 
-    print("\nDescribe the Python program you want to generate.")
-    print("Example:")
-    print("Write a function to check whether a number is prime.")
+Fix the code so that it correctly solves the task and passes
+all required assertions.
 
-    task = input("\nEnter your task: ").strip()
+Return ONLY the corrected Python code.
+Do not use Markdown code fences.
+Do not provide explanations.
+"""
 
-    if not task:
-        print("Error: Task description cannot be empty.")
-        return
+    response = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        temperature=0
+    )
 
-    print("\nGenerating Python code...")
-    print("Please wait...\n")
+    code = response.choices[0].message.content.strip()
 
-    try:
-        generated_code = generate_code(task)
-
-        print("=" * 60)
-        print("GENERATED PYTHON CODE")
-        print("=" * 60)
-
-        print(generated_code)
-
-        filename = save_code(generated_code)
-
-        print("\n" + "=" * 60)
-        print(f"Code successfully saved to: {filename}")
-        print("=" * 60)
-
-    except Exception as error:
-        print("\nError while generating code:")
-        print(error)
+    return clean_code(code)
 
 
-if __name__ == "__main__":
-    main()
+def clean_code(code):
+    """
+    Remove Markdown code fences if the model accidentally
+    includes them.
+    """
+
+    if code.startswith("```python"):
+        code = code[len("```python"):]
+
+    elif code.startswith("```"):
+        code = code[len("```"):]
+
+    if code.endswith("```"):
+        code = code[:-3]
+
+    return code.strip()
