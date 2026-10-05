@@ -1,167 +1,343 @@
-from code_generator import generate_code, fix_code
+import json
+from pathlib import Path
+
+from code_generator import (
+    generate_code,
+    fix_code,
+    generate_project_changes,
+)
+
 from executor import execute_code
-from datetime import datetime
+
+from project_context import (
+    inspect_project,
+    format_project_context,
+)
+
+from project_editor import apply_file_changes
 
 
+PROJECT_DIR = Path("sample_project")
 MAX_ATTEMPTS = 3
 
 
-def log_attempt(attempt_number, code, result, log_file="agent_log.txt"):
+def run_project_tests(project_dir):
     """
-    Save details of every execution attempt.
+    Run the sample project's test file safely.
     """
 
-    with open(log_file, "a", encoding="utf-8") as file:
+    project_dir = Path(project_dir).resolve()
 
-        file.write("\n")
-        file.write("=" * 70 + "\n")
-        file.write(
-            f"ATTEMPT {attempt_number} - "
-            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+    test_file = project_dir / "test_calculator.py"
+
+    if not test_file.is_file():
+        raise FileNotFoundError(
+            f"Test file not found: {test_file}"
         )
-        file.write("=" * 70 + "\n")
 
-        file.write("\n--- GENERATED CODE ---\n")
-        file.write(code)
-
-        file.write("\n\n--- STDOUT ---\n")
-        file.write(result["stdout"] or "(no output)")
-
-        file.write("\n\n--- STDERR ---\n")
-        file.write(result["stderr"] or "(no error)")
-
-        file.write("\n\n--- RETURN CODE ---\n")
-        file.write(str(result["return_code"]))
-
-        file.write("\n\n--- STATUS ---\n")
-        file.write("PASSED\n" if result["passed"] else "FAILED\n")
+    return execute_test_file(
+        test_file,
+        project_dir
+    )
 
 
-def run_agent(task):
+def execute_test_file(test_file, working_directory):
+    """
+    Execute the test file using subprocess with a timeout.
+    """
 
-    print("\n" + "=" * 70)
-    print("NATURAL LANGUAGE TO CODE - SELF-CORRECTING AGENT")
-    print("=" * 70)
+    import subprocess
+    import sys
 
-    print("\nTask:")
-    print(task)
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(test_file.resolve()),
+            ],
+            cwd=str(working_directory.resolve()),
+            capture_output=True,
+            text=True,
+            timeout=7,
+        )
 
-    print("\nGenerating initial code...")
+        return {
+            "passed": result.returncode == 0,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "return_code": result.returncode,
+        }
+
+    except subprocess.TimeoutExpired:
+
+        return {
+            "passed": False,
+            "stdout": "",
+            "stderr": "Tests timed out after 7 seconds.",
+            "return_code": -1,
+        }
+
+
+def run_week2_agent(task):
+    """
+    Week 2: Generate, execute, observe and self-correct code.
+    """
 
     code = generate_code(task)
 
-    # --------------------------------------------------
-    # DEMO MODE
-    # --------------------------------------------------
-    # Set this to True only when recording the
-    # self-correction demonstration.
-    #
-    # It intentionally makes Attempt 1 fail.
-    # The error is then sent to the LLM for correction.
-    # --------------------------------------------------
-
-    demo_mode = True
-
-    if demo_mode:
-        code = code + '\nassert False, "Demo failure: please fix the code"'
-
-    # --------------------------------------------------
-
     for attempt in range(1, MAX_ATTEMPTS + 1):
 
-        print("\n" + "-" * 70)
-        print(f"ATTEMPT {attempt}/{MAX_ATTEMPTS}")
-        print("-" * 70)
+        print(f"\nATTEMPT {attempt}/{MAX_ATTEMPTS}")
 
-        print("\nGenerated Code:\n")
+        print("\nGenerated code:\n")
         print(code)
-
-        print("\nExecuting code...")
 
         result = execute_code(code)
 
-        # Save attempt information
-        log_attempt(
-            attempt,
-            code,
-            result
-        )
-
-        # Show output
         if result["stdout"]:
-            print("\nOutput:")
+            print("\nOutput:\n")
             print(result["stdout"])
 
-        # Show error
         if result["stderr"]:
-            print("\nError:")
+            print("\nError:\n")
             print(result["stderr"])
-
-        # --------------------------------------------------
-        # SUCCESS
-        # --------------------------------------------------
 
         if result["passed"]:
 
-            print("\n" + "=" * 70)
-            print("SUCCESS - CODE PASSED")
-            print("=" * 70)
+            print("\nSUCCESS - CODE PASSED")
 
             return True
 
-        # --------------------------------------------------
-        # FAILURE
-        # --------------------------------------------------
-
         print("\nFAILED")
 
-        # If attempts are still available
         if attempt < MAX_ATTEMPTS:
 
-            print("\nSending error back to the LLM...")
-            print("The agent will try to fix the code.")
+            error_message = (
+                result["stderr"]
+                or result["stdout"]
+                or "Program exited with a non-zero return code."
+            )
 
-            error_message = result["stderr"]
+            print(
+                "\nSending error to the LLM for correction..."
+            )
 
-            if result["stdout"]:
-                error_message += (
-                    "\n\nProgram output:\n"
-                    + result["stdout"]
-                )
-
-            # Ask LLM to fix the failed code
             code = fix_code(
                 task,
                 code,
-                error_message
+                error_message,
             )
 
-        else:
+    print("\nMaximum attempts reached.")
 
-            print("\n" + "=" * 70)
-            print("FAILED - MAXIMUM ATTEMPTS REACHED")
-            print("=" * 70)
+    return False
 
-            return False
+
+def run_week3_agent(task):
+    """
+    Week 3:
+    Read the project, understand the files,
+    generate coordinated changes, back up files,
+    apply changes and run tests.
+    """
+
+    project_dir = PROJECT_DIR.resolve()
+
+    if not project_dir.is_dir():
+
+        raise FileNotFoundError(
+            f"Sample project not found: {project_dir}"
+        )
+
+    print("\nInspecting project files...")
+
+    context = inspect_project(project_dir)
+
+    if not context:
+
+        print("No Python files found.")
+
+        return False
+
+    print("\nProject context:\n")
+
+    print(
+        format_project_context(context)
+    )
+
+    print(
+        "\nAsking the LLM to propose coordinated edits..."
+    )
+
+    changes = generate_project_changes(
+        task,
+        context,
+    )
+
+    print("\nProposed files:")
+
+    for change in changes:
+
+        print(
+            "-",
+            change["path"]
+        )
+
+    # Show proposed changes
+    for change in changes:
+
+        print("\n" + "=" * 60)
+
+        print(
+            f"PROPOSED CHANGE: {change['path']}"
+        )
+
+        print("=" * 60)
+
+        print(
+            change["content"]
+        )
+
+    # Ask for approval
+    approval = input(
+        "\nApply these changes? Type YES to continue: "
+    ).strip().upper()
+
+    if approval != "YES":
+
+        print("\nChanges cancelled.")
+
+        return False
+
+    # Apply changes and create backups
+    result = apply_file_changes(
+        project_dir,
+        changes,
+    )
+
+    print("\nApplied files:")
+
+    for filename in result["applied_files"]:
+
+        print(
+            "-",
+            filename
+        )
+
+    print(
+        "\nBackups saved in:",
+        result["backup_directory"],
+    )
+
+    # Run tests
+    print("\nRunning project tests...")
+
+    test_result = run_project_tests(
+        project_dir
+    )
+
+    if test_result["stdout"]:
+
+        print("\nTest output:\n")
+
+        print(
+            test_result["stdout"]
+        )
+
+    if test_result["stderr"]:
+
+        print("\nTest errors:\n")
+
+        print(
+            test_result["stderr"]
+        )
+
+    if test_result["passed"]:
+
+        print(
+            "\nSUCCESS - ALL TESTS PASSED"
+        )
+
+        return True
+
+    print(
+        "\nTESTS FAILED"
+    )
+
+    print(
+        "\nThe changes were applied, but "
+        "automatic rollback and correction "
+        "are not implemented in this version."
+    )
+
+    return False
 
 
 def main():
 
-    print("\n" + "=" * 70)
-    print("WEEK 2 - EXECUTE, OBSERVE, SELF-CORRECT")
-    print("=" * 70)
-
-    task = input(
-        "\nEnter your programming task:\n> "
+    print(
+        "\n" + "=" * 60
     )
 
-    if not task.strip():
+    print(
+        "AI CODING AGENT - WEEK 3"
+    )
 
-        print("\nTask cannot be empty.")
+    print(
+        "=" * 60
+    )
+
+    print(
+        "\n1. Week 2: Generate and execute code"
+    )
+
+    print(
+        "2. Week 3: Understand and edit a multi-file project"
+    )
+
+    choice = input(
+        "\nSelect option (1 or 2): "
+    ).strip()
+
+    task = input(
+        "\nEnter your task:\n> "
+    ).strip()
+
+    if not task:
+
+        print(
+            "Task cannot be empty."
+        )
+
         return
 
-    run_agent(task)
+    try:
+
+        if choice == "1":
+
+            run_week2_agent(task)
+
+        elif choice == "2":
+
+            run_week3_agent(task)
+
+        else:
+
+            print(
+                "Invalid option."
+            )
+
+    except (
+        ValueError,
+        OSError,
+        json.JSONDecodeError
+    ) as error:
+
+        print(
+            f"\nAgent error: {error}"
+        )
 
 
 if __name__ == "__main__":
+
     main()
