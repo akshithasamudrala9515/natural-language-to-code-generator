@@ -1,0 +1,11 @@
+{
+    "task": "improve the average function",
+    "attempts": [
+        {
+            "attempt": 1,
+            "passed": true,
+            "stdout": "",
+            "stderr": "test_add (test_calculator.TestCalculator.test_add) ... ok\ntest_average (test_calculator.TestCalculator.test_average) ... ok\ntest_average_empty (test_calculator.TestCalculator.test_average_empty) ... ok\ntest_average_invalid_element (test_calculator.TestCalculator.test_average_invalid_element) ... ok\ntest_average_non_iterable (test_calculator.TestCalculator.test_average_non_iterable) ... ok\ntest_divide (test_calculator.TestCalculator.test_divide) ... ok\ntest_divide_by_zero (test_calculator.TestCalculator.test_divide_by_zero) ... ok\ntest_multiply (test_calculator.TestCalculator.test_multiply) ... ok\ntest_subtract (test_calculator.TestCalculator.test_subtract) ... ok\n\n----------------------------------------------------------------------\nRan 9 tests in 0.002s\n\nOK"
+        }
+    ]
+}
